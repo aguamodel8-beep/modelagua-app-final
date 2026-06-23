@@ -8,7 +8,7 @@ import base64
 from datetime import datetime
 
 # ------------------------------------------------------------
-# Configuración de la página
+# Configuración
 # ------------------------------------------------------------
 st.set_page_config(page_title="Modelagua - Análisis Básico", page_icon="💧", layout="wide")
 
@@ -16,7 +16,7 @@ if 'muestras_procesadas' not in st.session_state:
     st.session_state.muestras_procesadas = 0
 
 # ------------------------------------------------------------
-# Funciones de análisis
+# Funciones de análisis (iguales que antes)
 # ------------------------------------------------------------
 def convertir_a_mg_L(valor, unidad, parametro):
     if unidad == 'mg/L' or unidad == 'ppm':
@@ -181,7 +181,7 @@ def generar_pdf(lista_informes, resumen_final, lista_resumen):
     return pdf
 
 # ------------------------------------------------------------
-# Interfaz de usuario
+# Interfaz de usuario con selector de muestra
 # ------------------------------------------------------------
 st.title("💧 Modelagua - Análisis Básico")
 st.markdown("""
@@ -191,7 +191,6 @@ Puedes subir un archivo (CSV o Excel) o ingresar los datos manualmente.
 """)
 st.info(f"📊 Muestras procesadas en esta sesión: **{st.session_state.muestras_procesadas} de 3** (plan gratuito).")
 
-# Plantilla de ejemplo
 def descargar_plantilla():
     plantilla = pd.DataFrame({
         'Ca': [23],
@@ -210,7 +209,6 @@ def descargar_plantilla():
 
 st.markdown(descargar_plantilla(), unsafe_allow_html=True)
 
-# Guía de formato
 with st.expander("📖 Guía de formato del archivo"):
     st.markdown(
         "**Columnas obligatorias (nombres exactos):**\n"
@@ -225,3 +223,157 @@ with st.expander("📖 Guía de formato del archivo"):
         "- No uses puntos o comas para separar miles (ej. `580` en lugar de `580.0`).\n"
         "- Si tu archivo tiene más columnas, la app las ignorará."
     )
+
+opcion = st.radio("¿Cómo quieres ingresar los datos?", ("📁 Subir archivo", "✏️ Ingreso manual"))
+
+# ------------------------------------------------------------
+# SUBIR ARCHIVO
+# ------------------------------------------------------------
+if opcion == "📁 Subir archivo":
+    archivo = st.file_uploader("Selecciona un archivo (CSV o Excel)", type=["csv", "xlsx"])
+    if archivo is not None:
+        try:
+            # Leer archivo
+            if archivo.name.endswith('.csv'):
+                codificaciones = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+                df = None
+                for enc in codificaciones:
+                    try:
+                        archivo.seek(0)
+                        df = pd.read_csv(archivo, encoding=enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if df is None:
+                    st.error("No se pudo leer el archivo CSV. Intenta guardarlo como UTF-8 desde Excel.")
+                    st.stop()
+            else:
+                df = pd.read_excel(archivo, engine='openpyxl')
+            
+            st.write("Vista previa de las primeras filas:")
+            st.dataframe(df.head())
+
+            # Validar columnas obligatorias
+            columnas_requeridas = ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl', 'pH', 'Temp.(oC)']
+            columnas_faltantes = [col for col in columnas_requeridas if col not in df.columns]
+            if columnas_faltantes:
+                st.error(f"❌ Faltan las siguientes columnas: {', '.join(columnas_faltantes)}. Verifica los nombres.")
+                st.stop()
+
+            # SELECCIONAR COLUMNA DE IDENTIFICACIÓN DE MUESTRA
+            # Buscar columnas que puedan contener nombres (texto o con 'ID', 'Sample', 'Muestra', 'Station', 'Location')
+            columnas_posibles = [col for col in df.columns if any(palabra in col.lower() for palabra in ['id', 'sample', 'muestra', 'station', 'location', 'nombre', 'name'])]
+            if columnas_posibles:
+                columna_muestra = st.selectbox("Selecciona la columna que identifica a cada muestra:", columnas_posibles, index=0)
+            else:
+                # Si no hay columnas obvias, ofrecemos crear nombres automáticos
+                st.info("No se encontró una columna con identificadores de muestra. Se usarán números de fila (Muestra_1, Muestra_2, ...).")
+                columna_muestra = None  # usará índice
+
+            # Seleccionar unidades
+            st.subheader("Selecciona las unidades de tus datos")
+            unidades_global = st.selectbox("Unidad común para todas las concentraciones", ["mg/L", "meq/L", "ppm"])
+
+            if st.button("🔬 Procesar"):
+                if st.session_state.muestras_procesadas >= 3:
+                    st.error("⚠️ Límite gratuito alcanzado. Contacta para plan de pago.")
+                else:
+                    num_muestras = len(df)
+                    if st.session_state.muestras_procesadas + num_muestras > 3:
+                        restantes = 3 - st.session_state.muestras_procesadas
+                        st.warning(f"⚠️ El archivo tiene {num_muestras} muestras. Solo puedes procesar {restantes} más. Sube un archivo más pequeño o contacta para plan de pago.")
+                    else:
+                        lista_informes = []
+                        lista_resumen = []
+                        for idx, row in df.iterrows():
+                            # Obtener nombre de muestra
+                            if columna_muestra and columna_muestra in df.columns:
+                                nombre = str(row[columna_muestra])
+                                if pd.isna(nombre) or nombre == '':
+                                    nombre = f"Muestra_{idx+1}"
+                            else:
+                                nombre = f"Muestra_{idx+1}"
+
+                            datos_mg = {}
+                            for param in ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']:
+                                val = row.get(param, 0)
+                                if pd.isna(val):
+                                    val = 0
+                                datos_mg[param] = convertir_a_mg_L(val, unidades_global, param)
+                            
+                            temp = row.get('Temp.(oC)', 25.0)
+                            if pd.isna(temp):
+                                temp = 25.0
+                            ph = row.get('pH', None)
+                            if pd.isna(ph):
+                                ph = None
+
+                            info = generar_informe(datos_mg, temp, ph, nombre)
+                            lista_informes.append((nombre, info))
+                            tds = sum(datos_mg.values())
+                            meq,_,_,_,_ = balance_ionico(datos_mg)
+                            tipo = kurlov(meq)
+                            lista_resumen.append((nombre, tds, tipo))
+
+                        st.session_state.muestras_procesadas += num_muestras
+                        resumen = """Balance iónico: Errores aceptables (<10%).\nClasificación Kurlov: Varía según muestra.\nTDS: Rango salino o según cada muestra.\nRelaciones iónicas: Exceso de sodio, mezcla calcita/dolomita, exceso HCO3.\nRiesgo: Mayoría sobresaturada en calcita (incrustación), excepto si LI negativo (corrosión)."""
+                        pdf = generar_pdf(lista_informes, resumen, lista_resumen)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                            pdf.output(tmp.name)
+                            with open(tmp.name, "rb") as f:
+                                st.download_button("📥 Descargar informe PDF", f, file_name=f"informe_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+                            os.unlink(tmp.name)
+                        st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
+        except Exception as e:
+            st.error(f"❌ Error al leer el archivo: {e}. Asegúrate de que el formato sea correcto (CSV con coma o Excel .xlsx).")
+
+# ------------------------------------------------------------
+# INGRESO MANUAL
+# ------------------------------------------------------------
+elif opcion == "✏️ Ingreso manual":
+    st.subheader("Ingresa los valores de una muestra (unidad: mg/L)")
+    nombre_manual = st.text_input("Nombre de la muestra (opcional)", value="Muestra_manual")
+    cols = st.columns(2)
+    datos_manual = {}
+    with cols[0]:
+        datos_manual['Ca'] = st.number_input("Ca (mg/L)", value=0.0, step=0.1)
+        datos_manual['Mg'] = st.number_input("Mg (mg/L)", value=0.0, step=0.1)
+        datos_manual['Na'] = st.number_input("Na (mg/L)", value=0.0, step=0.1)
+        datos_manual['K'] = st.number_input("K (mg/L)", value=0.0, step=0.1)
+    with cols[1]:
+        datos_manual['HCO3'] = st.number_input("HCO3 (mg/L)", value=0.0, step=0.1)
+        datos_manual['SO4'] = st.number_input("SO4 (mg/L)", value=0.0, step=0.1)
+        datos_manual['Cl'] = st.number_input("Cl (mg/L)", value=0.0, step=0.1)
+        temp_man = st.number_input("Temperatura (°C)", value=25.0, step=0.1)
+        ph_man = st.number_input("pH", value=7.0, step=0.01)
+    
+    if st.button("🔬 Generar informe", key="procesar_manual"):
+        if st.session_state.muestras_procesadas >= 3:
+            st.error("⚠️ Límite gratuito alcanzado. Contacta para plan de pago.")
+        else:
+            datos_mg = {k: v for k, v in datos_manual.items()}
+            if sum(datos_mg.values()) == 0:
+                st.warning("⚠️ Todos los valores son cero. Ingresa al menos un parámetro.")
+            else:
+                info = generar_informe(datos_mg, temp_man, ph_man, nombre_manual)
+                st.text(info)
+                lista_informes = [(nombre_manual, info)]
+                tds = sum(datos_mg.values())
+                meq,_,_,_,_ = balance_ionico(datos_mg)
+                tipo = kurlov(meq)
+                lista_resumen = [(nombre_manual, tds, tipo)]
+                resumen = "Informe de una muestra manual."
+                pdf = generar_pdf(lista_informes, resumen, lista_resumen)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    pdf.output(tmp.name)
+                    with open(tmp.name, "rb") as f:
+                        st.download_button("📥 Descargar PDF", f, file_name=f"informe_manual_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+                    os.unlink(tmp.name)
+                st.session_state.muestras_procesadas += 1
+                st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
+
+# ------------------------------------------------------------
+# Pie de página
+# ------------------------------------------------------------
+st.markdown("---")
+st.caption("Modelagua - Análisis hidrogeoquímico básico. Para servicios profesionales, contacta con nosotros.")
