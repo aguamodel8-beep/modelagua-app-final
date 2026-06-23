@@ -228,14 +228,15 @@ with st.expander("📖 Guía de formato del archivo"):
 opcion = st.radio("¿Cómo quieres ingresar los datos?", ("📁 Subir archivo", "✏️ Ingreso manual"))
 
 # ------------------------------------------------------------
-# SUBIR ARCHIVO (con selectores para TODAS las columnas)
+# SUBIR ARCHIVO (con selector de hoja para Excel)
 # ------------------------------------------------------------
 if opcion == "📁 Subir archivo":
-    archivo = st.file_uploader("Selecciona un archivo (CSV o Excel)", type=["csv", "xlsx"])
+    archivo = st.file_uploader("Selecciona un archivo (CSV o Excel)", type=["csv", "xlsx", "xls"])
     if archivo is not None:
         try:
-            # Leer archivo con detección de codificación
+            # Leer el archivo según su extensión
             if archivo.name.endswith('.csv'):
+                # CSV: probar codificaciones
                 codificaciones = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
                 df = None
                 for enc in codificaciones:
@@ -249,10 +250,14 @@ if opcion == "📁 Subir archivo":
                     st.error("No se pudo leer el archivo CSV. Intenta guardarlo como UTF-8 desde Excel.")
                     st.stop()
             else:
-                if archivo.name.endswith('.csv'):
-    # ... detección de codificación ...
-else:
-    df = pd.read_excel(archivo, engine='openpyxl')
+                # Excel: mostrar todas las hojas y permitir elegir
+                xls = pd.ExcelFile(archivo)
+                hojas = xls.sheet_names
+                if len(hojas) == 1:
+                    hoja_seleccionada = hojas[0]
+                else:
+                    hoja_seleccionada = st.selectbox("Selecciona la hoja (página) del archivo Excel:", hojas, index=0)
+                df = pd.read_excel(archivo, sheet_name=hoja_seleccionada, engine='openpyxl')
 
             st.write("Vista previa de las primeras filas:")
             st.dataframe(df.head())
@@ -265,30 +270,23 @@ else:
                 st.stop()
 
             # --- SELECCIÓN DE COLUMNAS (TODAS) ---
-            # Obtener lista de columnas
             todas_columnas = list(df.columns)
 
-            # Identificador de muestra (obligatorio elegir o "Ninguna")
             opciones_id = ["Ninguna (usar número de fila)"] + todas_columnas
             columna_muestra = st.selectbox("Selecciona la columna que identifica a cada muestra:", opciones_id, index=0)
 
-            # Temperatura
             opciones_temp = ["No disponible"] + todas_columnas
             columna_temp = st.selectbox("Selecciona la columna con la temperatura:", opciones_temp, index=0)
 
-            # pH
             opciones_ph = ["No disponible"] + todas_columnas
             columna_ph = st.selectbox("Selecciona la columna con el pH:", opciones_ph, index=0)
 
-            # Conductividad eléctrica (CE)
             opciones_ce = ["No disponible"] + todas_columnas
             columna_ce = st.selectbox("Selecciona la columna con la conductividad eléctrica:", opciones_ce, index=0)
 
-            # Potencial redox (Eh)
             opciones_eh = ["No disponible"] + todas_columnas
             columna_eh = st.selectbox("Selecciona la columna con el potencial redox (Eh):", opciones_eh, index=0)
 
-            # Unidades
             st.subheader("Selecciona las unidades de tus datos")
             unidades_global = st.selectbox("Unidad común para todas las concentraciones", ["mg/L", "meq/L", "ppm"])
 
@@ -304,7 +302,6 @@ else:
                         lista_informes = []
                         lista_resumen = []
                         for idx, row in df.iterrows():
-                            # Obtener nombre de muestra
                             if columna_muestra != "Ninguna (usar número de fila)":
                                 nombre = str(row[columna_muestra])
                                 if pd.isna(nombre) or nombre == '':
@@ -312,7 +309,6 @@ else:
                             else:
                                 nombre = f"Muestra_{idx+1}"
 
-                            # Obtener temperatura
                             if columna_temp != "No disponible":
                                 temp = row[columna_temp]
                                 if pd.isna(temp):
@@ -320,7 +316,6 @@ else:
                             else:
                                 temp = 25.0
 
-                            # Obtener pH
                             if columna_ph != "No disponible":
                                 ph = row[columna_ph]
                                 if pd.isna(ph):
@@ -328,15 +323,12 @@ else:
                             else:
                                 ph = None
 
-                            # Obtener CE y Eh (se leen pero no se usan aún)
-                            ce = None
-                            eh = None
+                            # CE y Eh se leen pero no se usan aún (solo lectura)
                             if columna_ce != "No disponible":
                                 ce = row[columna_ce] if not pd.isna(row[columna_ce]) else None
                             if columna_eh != "No disponible":
                                 eh = row[columna_eh] if not pd.isna(row[columna_eh]) else None
 
-                            # Extraer iones
                             datos_mg = {}
                             for param in ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']:
                                 val = row.get(param, 0)
@@ -344,7 +336,6 @@ else:
                                     val = 0
                                 datos_mg[param] = convertir_a_mg_L(val, unidades_global, param)
 
-                            # Generar informe
                             info = generar_informe(datos_mg, temp, ph, nombre)
                             lista_informes.append((nombre, info))
                             tds = sum(datos_mg.values())
@@ -372,10 +363,10 @@ else:
                             st.error(f"❌ Error al generar el PDF: {e}. Asegúrate de que la librería fpdf esté instalada.")
 
         except Exception as e:
-            st.error(f"❌ Error al leer el archivo: {e}. Asegúrate de que el formato sea correcto (CSV con coma o Excel .xlsx).")
+            st.error(f"❌ Error al leer el archivo: {e}. Asegúrate de que el formato sea correcto (CSV con coma o Excel .xlsx/.xls).")
 
 # ------------------------------------------------------------
-# INGRESO MANUAL (sin cambios, ya funciona)
+# INGRESO MANUAL (sin cambios)
 # ------------------------------------------------------------
 elif opcion == "✏️ Ingreso manual":
     st.subheader("Ingresa los valores de una muestra (unidad: mg/L)")
