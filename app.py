@@ -16,7 +16,7 @@ if 'muestras_procesadas' not in st.session_state:
     st.session_state.muestras_procesadas = 0
 
 # ------------------------------------------------------------
-# Funciones de análisis (iguales que antes)
+# Funciones de análisis (sin cambios)
 # ------------------------------------------------------------
 def convertir_a_mg_L(valor, unidad, parametro):
     if unidad == 'mg/L' or unidad == 'ppm':
@@ -181,7 +181,7 @@ def generar_pdf(lista_informes, resumen_final, lista_resumen):
     return pdf
 
 # ------------------------------------------------------------
-# Interfaz de usuario con selector de muestra
+# Interfaz de usuario
 # ------------------------------------------------------------
 st.title("💧 Modelagua - Análisis Básico")
 st.markdown("""
@@ -191,6 +191,7 @@ Puedes subir un archivo (CSV o Excel) o ingresar los datos manualmente.
 """)
 st.info(f"📊 Muestras procesadas en esta sesión: **{st.session_state.muestras_procesadas} de 3** (plan gratuito).")
 
+# Descarga de plantilla
 def descargar_plantilla():
     plantilla = pd.DataFrame({
         'Ca': [23],
@@ -209,10 +210,12 @@ def descargar_plantilla():
 
 st.markdown(descargar_plantilla(), unsafe_allow_html=True)
 
+# Guía de formato
 with st.expander("📖 Guía de formato del archivo"):
     st.markdown(
         "**Columnas obligatorias (nombres exactos):**\n"
-        "- `Ca`, `Mg`, `Na`, `K`, `HCO3`, `SO4`, `Cl`, `pH`, `Temp.(oC)`\n\n"
+        "- `Ca`, `Mg`, `Na`, `K`, `HCO3`, `SO4`, `Cl`\n"
+        "(pH y temperatura son opcionales, pero se recomiendan para cálculos más precisos)\n\n"
         "**Unidades aceptadas:** mg/L (por defecto), meq/L, ppm.\n\n"
         "**Ejemplo de fila (CSV):**\n"
         "```\n"
@@ -233,7 +236,7 @@ if opcion == "📁 Subir archivo":
     archivo = st.file_uploader("Selecciona un archivo (CSV o Excel)", type=["csv", "xlsx"])
     if archivo is not None:
         try:
-            # Leer archivo
+            # Leer archivo con detección de codificación
             if archivo.name.endswith('.csv'):
                 codificaciones = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
                 df = None
@@ -249,31 +252,55 @@ if opcion == "📁 Subir archivo":
                     st.stop()
             else:
                 df = pd.read_excel(archivo, engine='openpyxl')
-            
+
             st.write("Vista previa de las primeras filas:")
             st.dataframe(df.head())
 
-            # Validar columnas obligatorias
-            columnas_requeridas = ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl', 'pH', 'Temp.(oC)']
+            # Validar columnas obligatorias (iones mayoritarios)
+            columnas_requeridas = ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']
             columnas_faltantes = [col for col in columnas_requeridas if col not in df.columns]
             if columnas_faltantes:
-                st.error(f"❌ Faltan las siguientes columnas: {', '.join(columnas_faltantes)}. Verifica los nombres.")
+                st.error(f"❌ Faltan las siguientes columnas obligatorias: {', '.join(columnas_faltantes)}. Verifica los nombres.")
                 st.stop()
 
-            # SELECCIONAR COLUMNA DE IDENTIFICACIÓN DE MUESTRA
-            # Buscar columnas que puedan contener nombres (texto o con 'ID', 'Sample', 'Muestra', 'Station', 'Location')
-            columnas_posibles = [col for col in df.columns if any(palabra in col.lower() for palabra in ['id', 'sample', 'muestra', 'station', 'location', 'nombre', 'name'])]
-            if columnas_posibles:
-                columna_muestra = st.selectbox("Selecciona la columna que identifica a cada muestra:", columnas_posibles, index=0)
+            # --- SELECCIÓN DE COLUMNAS ---
+            # Columna de identificación de muestra
+            cols_id = [col for col in df.columns if any(palabra in col.lower() for palabra in ['id', 'sample', 'muestra', 'station', 'location', 'nombre', 'name'])]
+            if cols_id:
+                columna_muestra = st.selectbox("Selecciona la columna que identifica a cada muestra:", cols_id, index=0)
             else:
-                # Si no hay columnas obvias, ofrecemos crear nombres automáticos
-                st.info("No se encontró una columna con identificadores de muestra. Se usarán números de fila (Muestra_1, Muestra_2, ...).")
-                columna_muestra = None  # usará índice
+                st.info("No se encontró columna con identificadores. Se usarán números de fila.")
+                columna_muestra = None
 
-            # Seleccionar unidades
+            # Columna de temperatura
+            cols_temp = ['Temp.(oC)', 'Temperatura', 'Temp', 'Temperature', 'T(°C)'] + [col for col in df.columns if 'temp' in col.lower()]
+            cols_temp_existentes = [col for col in cols_temp if col in df.columns]
+            opciones_temp = ["No disponible"] + cols_temp_existentes
+            columna_temp = st.selectbox("Selecciona la columna que contiene la temperatura (o 'No disponible'):", opciones_temp, index=0)
+
+            # Columna de pH
+            cols_ph = ['pH', 'Ph', 'ph'] + [col for col in df.columns if 'ph' in col.lower()]
+            cols_ph_existentes = [col for col in cols_ph if col in df.columns]
+            opciones_ph = ["No disponible"] + cols_ph_existentes
+            columna_ph = st.selectbox("Selecciona la columna que contiene el pH (o 'No disponible'):", opciones_ph, index=0)
+
+            # Columna de conductividad (opcional, solo lectura)
+            cols_ce = ['CE', 'Conductividad', 'Conductivity', 'Specific conductance'] + [col for col in df.columns if 'conduct' in col.lower()]
+            cols_ce_existentes = [col for col in cols_ce if col in df.columns]
+            opciones_ce = ["No disponible"] + cols_ce_existentes
+            columna_ce = st.selectbox("Selecciona la columna que contiene la conductividad (opcional):", opciones_ce, index=0)
+
+            # Columna de Eh (opcional)
+            cols_eh = ['Eh', 'Redox', 'ORP'] + [col for col in df.columns if 'eh' in col.lower() or 'redox' in col.lower()]
+            cols_eh_existentes = [col for col in cols_eh if col in df.columns]
+            opciones_eh = ["No disponible"] + cols_eh_existentes
+            columna_eh = st.selectbox("Selecciona la columna que contiene el potencial redox (opcional):", opciones_eh, index=0)
+
+            # Unidades
             st.subheader("Selecciona las unidades de tus datos")
             unidades_global = st.selectbox("Unidad común para todas las concentraciones", ["mg/L", "meq/L", "ppm"])
 
+            # Botón de procesar
             if st.button("🔬 Procesar"):
                 if st.session_state.muestras_procesadas >= 3:
                     st.error("⚠️ Límite gratuito alcanzado. Contacta para plan de pago.")
@@ -294,20 +321,38 @@ if opcion == "📁 Subir archivo":
                             else:
                                 nombre = f"Muestra_{idx+1}"
 
+                            # Obtener temperatura y pH
+                            if columna_temp != "No disponible":
+                                temp = row[columna_temp]
+                                if pd.isna(temp):
+                                    temp = 25.0
+                            else:
+                                temp = 25.0
+
+                            if columna_ph != "No disponible":
+                                ph = row[columna_ph]
+                                if pd.isna(ph):
+                                    ph = None
+                            else:
+                                ph = None
+
+                            # Obtener conductividad y Eh (por ahora solo se leen, no se usan)
+                            ce = None
+                            eh = None
+                            if columna_ce != "No disponible":
+                                ce = row[columna_ce] if not pd.isna(row[columna_ce]) else None
+                            if columna_eh != "No disponible":
+                                eh = row[columna_eh] if not pd.isna(row[columna_eh]) else None
+
+                            # Extraer iones
                             datos_mg = {}
                             for param in ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']:
                                 val = row.get(param, 0)
                                 if pd.isna(val):
                                     val = 0
                                 datos_mg[param] = convertir_a_mg_L(val, unidades_global, param)
-                            
-                            temp = row.get('Temp.(oC)', 25.0)
-                            if pd.isna(temp):
-                                temp = 25.0
-                            ph = row.get('pH', None)
-                            if pd.isna(ph):
-                                ph = None
 
+                            # Generar informe
                             info = generar_informe(datos_mg, temp, ph, nombre)
                             lista_informes.append((nombre, info))
                             tds = sum(datos_mg.values())
@@ -315,20 +360,33 @@ if opcion == "📁 Subir archivo":
                             tipo = kurlov(meq)
                             lista_resumen.append((nombre, tds, tipo))
 
+                        # Incrementar contador
                         st.session_state.muestras_procesadas += num_muestras
-                        resumen = """Balance iónico: Errores aceptables (<10%).\nClasificación Kurlov: Varía según muestra.\nTDS: Rango salino o según cada muestra.\nRelaciones iónicas: Exceso de sodio, mezcla calcita/dolomita, exceso HCO3.\nRiesgo: Mayoría sobresaturada en calcita (incrustación), excepto si LI negativo (corrosión)."""
-                        pdf = generar_pdf(lista_informes, resumen, lista_resumen)
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                            pdf.output(tmp.name)
-                            with open(tmp.name, "rb") as f:
-                                st.download_button("📥 Descargar informe PDF", f, file_name=f"informe_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-                            os.unlink(tmp.name)
-                        st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
+
+                        # Resumen
+                        resumen = """Balance iónico: Errores aceptables (<10%).
+                        Clasificación Kurlov: Varía según muestra.
+                        TDS: Rango salino o según cada muestra.
+                        Relaciones iónicas: Exceso de sodio, mezcla calcita/dolomita, exceso HCO3.
+                        Riesgo: Mayoría sobresaturada en calcita (incrustación), excepto si LI negativo (corrosión)."""
+
+                        # Generar PDF
+                        try:
+                            pdf = generar_pdf(lista_informes, resumen, lista_resumen)
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                                pdf.output(tmp.name)
+                                with open(tmp.name, "rb") as f:
+                                    st.download_button("📥 Descargar informe PDF", f, file_name=f"informe_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+                                os.unlink(tmp.name)
+                            st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
+                        except Exception as e:
+                            st.error(f"❌ Error al generar el PDF: {e}. Asegúrate de que la librería fpdf esté instalada.")
+
         except Exception as e:
             st.error(f"❌ Error al leer el archivo: {e}. Asegúrate de que el formato sea correcto (CSV con coma o Excel .xlsx).")
 
 # ------------------------------------------------------------
-# INGRESO MANUAL
+# INGRESO MANUAL (funciona bien, se mantiene igual)
 # ------------------------------------------------------------
 elif opcion == "✏️ Ingreso manual":
     st.subheader("Ingresa los valores de una muestra (unidad: mg/L)")
@@ -346,7 +404,7 @@ elif opcion == "✏️ Ingreso manual":
         datos_manual['Cl'] = st.number_input("Cl (mg/L)", value=0.0, step=0.1)
         temp_man = st.number_input("Temperatura (°C)", value=25.0, step=0.1)
         ph_man = st.number_input("pH", value=7.0, step=0.01)
-    
+
     if st.button("🔬 Generar informe", key="procesar_manual"):
         if st.session_state.muestras_procesadas >= 3:
             st.error("⚠️ Límite gratuito alcanzado. Contacta para plan de pago.")
@@ -363,14 +421,17 @@ elif opcion == "✏️ Ingreso manual":
                 tipo = kurlov(meq)
                 lista_resumen = [(nombre_manual, tds, tipo)]
                 resumen = "Informe de una muestra manual."
-                pdf = generar_pdf(lista_informes, resumen, lista_resumen)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    pdf.output(tmp.name)
-                    with open(tmp.name, "rb") as f:
-                        st.download_button("📥 Descargar PDF", f, file_name=f"informe_manual_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-                    os.unlink(tmp.name)
-                st.session_state.muestras_procesadas += 1
-                st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
+                try:
+                    pdf = generar_pdf(lista_informes, resumen, lista_resumen)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        pdf.output(tmp.name)
+                        with open(tmp.name, "rb") as f:
+                            st.download_button("📥 Descargar PDF", f, file_name=f"informe_manual_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+                        os.unlink(tmp.name)
+                    st.session_state.muestras_procesadas += 1
+                    st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
+                except Exception as e:
+                    st.error(f"❌ Error al generar el PDF: {e}. Asegúrate de que fpdf esté instalado.")
 
 # ------------------------------------------------------------
 # Pie de página
