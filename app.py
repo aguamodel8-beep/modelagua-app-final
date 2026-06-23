@@ -212,10 +212,16 @@ st.markdown(descargar_plantilla(), unsafe_allow_html=True)
 
 # Guía de formato
 with st.expander("📖 Guía de formato del archivo"):
-    st.markdown("""
-    **Columnas obligatorias (nombres exactos):**
-    - `Ca`, `Mg`, `Na`, `K`, `HCO3`, `SO4`, `Cl`, `pH`, `Temp.(oC)`
-
-    **Unidades aceptadas:** mg/L (por defecto), meq/L, ppm.
-
-    **Ejemplo de fila (CSV):**
+    st.markdown(
+        "**Columnas obligatorias (nombres exactos):**\n"
+        "- `Ca`, `Mg`, `Na`, `K`, `HCO3`, `SO4`, `Cl`, `pH`, `Temp.(oC)`\n\n"
+        "**Unidades aceptadas:** mg/L (por defecto), meq/L, ppm.\n\n"
+        "**Ejemplo de fila (CSV):**\n"
+        "```\n"
+        "Ca,Mg,Na,K,HCO3,SO4,Cl,pH,Temp.(oC)\n"
+        "23,8,580,30,842,534,236,7.7,50\n"
+        "```\n"
+        "- Si falta algún valor, escribe `0` o deja la celda vacía.\n"
+        "- No uses puntos o comas para separar miles (ej. `580` en lugar de `580.0`).\n"
+        "- Si tu archivo tiene más columnas, la app las ignorará."
+    )
