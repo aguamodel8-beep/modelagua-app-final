@@ -249,7 +249,10 @@ if opcion == "📁 Subir archivo":
                     st.error("No se pudo leer el archivo CSV. Intenta guardarlo como UTF-8 desde Excel.")
                     st.stop()
             else:
-                df = pd.read_excel(archivo, engine='openpyxl')
+                if archivo.name.endswith('.csv'):
+    # ... detección de codificación ...
+else:
+    df = pd.read_excel(archivo, engine='openpyxl')
 
             st.write("Vista previa de las primeras filas:")
             st.dataframe(df.head())
