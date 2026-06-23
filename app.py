@@ -10,24 +10,32 @@ from datetime import datetime
 # ------------------------------------------------------------
 # Configuración
 # ------------------------------------------------------------
-st.set_page_config(page_title="Modelagua - Análisis Básico", page_icon="💧", layout="wide")
+st.set_page_config(page_title="Modelagua - Análisis Profesional", page_icon="💧", layout="wide")
 
 if 'muestras_procesadas' not in st.session_state:
     st.session_state.muestras_procesadas = 0
 
 # ------------------------------------------------------------
-# Funciones de análisis (sin cambios)
+# Funciones de conversión y análisis
 # ------------------------------------------------------------
 def convertir_a_mg_L(valor, unidad, parametro):
-    if unidad == 'mg/L' or unidad == 'ppm':
+    """
+    Convierte cualquier unidad a mg/L.
+    Soporta: mg/L, ppm, meq/L, µg/L.
+    """
+    if unidad in ['mg/L', 'ppm']:
         return valor
     elif unidad == 'meq/L':
         pesos_eq = {
             'Ca': 40.08/2, 'Mg': 24.31/2, 'Na': 22.99/1, 'K': 39.10/1,
             'HCO3': 61.02/1, 'SO4': 96.06/2, 'Cl': 35.45/1
         }
-        return valor * pesos_eq.get(parametro, 1)
-    return valor
+        eq = pesos_eq.get(parametro, 1)
+        return valor * eq
+    elif unidad == 'µg/L':
+        return valor / 1000
+    else:
+        return valor
 
 def balance_ionico(datos_mg):
     pesos = {'Ca':40.08, 'Mg':24.31, 'Na':22.99, 'K':39.10, 'HCO3':61.02, 'SO4':96.06, 'Cl':35.45}
@@ -106,11 +114,14 @@ def clean_text(txt):
         txt = txt.replace(src, dst)
     return txt.encode('ascii', 'ignore').decode('ascii')
 
-def generar_informe(datos_mg, temperatura_c, ph, nombre_muestra="Muestra"):
+def generar_informe(datos_mg, temperatura_c, ph, nombre_muestra="Muestra", ce_val=None, eh_val=None, datos_traza=None):
+    """
+    Versión extendida: incluye datos de CE, Eh y elementos traza (aunque aún no se usan en cálculos).
+    """
     meq, cat, an, error, diag_balance = balance_ionico(datos_mg)
     tipo = kurlov(meq)
     na_cl, ca_mg, caMg_hco3, interps = relaciones_ionicas(meq)
-    tds = sum(datos_mg.values())
+    tds = sum([datos_mg.get(p, 0) for p in ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']])
     if tds < 500: clasif_tds = "Dulce"
     elif tds < 1500: clasif_tds = "Salobre"
     elif tds < 5000: clasif_tds = "Salina"
@@ -129,6 +140,11 @@ def generar_informe(datos_mg, temperatura_c, ph, nombre_muestra="Muestra"):
         riesgo = "No se calculó LI (falta pH)"
     lines = []
     lines.append(f"\n--- INFORME PARA {nombre_muestra} ---")
+    # Mostrar CE y Eh si existen
+    if ce_val is not None:
+        lines.append(f"Conductividad: {ce_val:.1f} µS/cm")
+    if eh_val is not None:
+        lines.append(f"Potencial redox: {eh_val:.0f} mV")
     lines.append("\n1. CALIDAD DE LOS DATOS")
     lines.append(f"   Error de balance: {error:.2f}%")
     lines.append(f"   {diag_balance}")
@@ -144,6 +160,12 @@ def generar_informe(datos_mg, temperatura_c, ph, nombre_muestra="Muestra"):
         lines.append(f"      • {line}")
     lines.append("\n4. RIESGO DE INCRUSTACIÓN (CALCITA)")
     lines.append(f"   {riesgo}")
+    # Sección de traza (por ahora solo muestra si hay datos)
+    if datos_traza:
+        lines.append("\n5. ELEMENTOS TRAZA (lectura)")
+        for param, valor in datos_traza.items():
+            if valor and valor != 0:
+                lines.append(f"   {param}: {valor:.4f} mg/L")
     return "\n".join(lines)
 
 def generar_pdf(lista_informes, resumen_final, lista_resumen):
@@ -183,9 +205,9 @@ def generar_pdf(lista_informes, resumen_final, lista_resumen):
 # ------------------------------------------------------------
 # Interfaz de usuario
 # ------------------------------------------------------------
-st.title("💧 Modelagua - Análisis Básico")
+st.title("💧 Modelagua - Análisis Profesional")
 st.markdown("""
-**Bienvenido al análisis básico gratuito.**  
+**Bienvenido al análisis profesional.**  
 Puedes subir un archivo (CSV o Excel) o ingresar los datos manualmente.  
 **Límite:** 3 muestras por sesión (no se guarda información personal).
 """)
@@ -228,15 +250,14 @@ with st.expander("📖 Guía de formato del archivo"):
 opcion = st.radio("¿Cómo quieres ingresar los datos?", ("📁 Subir archivo", "✏️ Ingreso manual"))
 
 # ------------------------------------------------------------
-# SUBIR ARCHIVO (con selector de hoja para Excel)
+# SUBIR ARCHIVO (versión flexible)
 # ------------------------------------------------------------
 if opcion == "📁 Subir archivo":
-    archivo = st.file_uploader("Selecciona un archivo (CSV o Excel)", type=["csv", "xlsx", "xls"])
+    archivo = st.file_uploader("Selecciona un archivo (CSV o Excel)", type=["csv", "xlsx"])
     if archivo is not None:
         try:
-            # Leer el archivo según su extensión
+            # Leer archivo
             if archivo.name.endswith('.csv'):
-                # CSV: probar codificaciones
                 codificaciones = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
                 df = None
                 for enc in codificaciones:
@@ -250,96 +271,184 @@ if opcion == "📁 Subir archivo":
                     st.error("No se pudo leer el archivo CSV. Intenta guardarlo como UTF-8 desde Excel.")
                     st.stop()
             else:
-                # Excel: mostrar todas las hojas y permitir elegir
-                xls = pd.ExcelFile(archivo)
-                hojas = xls.sheet_names
-                if len(hojas) == 1:
-                    hoja_seleccionada = hojas[0]
-                else:
-                    hoja_seleccionada = st.selectbox("Selecciona la hoja (página) del archivo Excel:", hojas, index=0)
-                df = pd.read_excel(archivo, sheet_name=hoja_seleccionada, engine='openpyxl')
+                # Para Excel, permitir elegir hoja
+                try:
+                    hojas = pd.ExcelFile(archivo).sheet_names
+                    hoja_seleccionada = st.selectbox("Selecciona la hoja del archivo Excel", hojas, index=0)
+                    df = pd.read_excel(archivo, sheet_name=hoja_seleccionada, engine='openpyxl')
+                except Exception as e:
+                    st.error(f"❌ Error al leer el archivo Excel: {e}. Asegúrate de que sea un archivo .xlsx válido.")
+                    st.stop()
 
             st.write("Vista previa de las primeras filas:")
             st.dataframe(df.head())
 
-            # Validar columnas obligatorias (iones mayoritarios)
-            columnas_requeridas = ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']
-            columnas_faltantes = [col for col in columnas_requeridas if col not in df.columns]
-            if columnas_faltantes:
-                st.error(f"❌ Faltan las siguientes columnas obligatorias: {', '.join(columnas_faltantes)}. Verifica los nombres.")
-                st.stop()
-
-            # --- SELECCIÓN DE COLUMNAS (TODAS) ---
+            # Lista de todas las columnas
             todas_columnas = list(df.columns)
 
-            opciones_id = ["Ninguna (usar número de fila)"] + todas_columnas
-            columna_muestra = st.selectbox("Selecciona la columna que identifica a cada muestra:", opciones_id, index=0)
+            # ------------------------------------------------------------------
+            # 1. PARÁMETROS FISICOQUÍMICOS
+            # ------------------------------------------------------------------
+            st.subheader("📊 Parámetros fisicoquímicos")
+            col1, col2 = st.columns(2)
 
-            opciones_temp = ["No disponible"] + todas_columnas
-            columna_temp = st.selectbox("Selecciona la columna con la temperatura:", opciones_temp, index=0)
+            with col1:
+                col_muestra = st.selectbox("Columna con ID de muestra", ["Ninguna"] + todas_columnas, index=0)
+                col_temp = st.selectbox("Columna con Temperatura (°C)", ["No disponible"] + todas_columnas, index=0)
+                st.text("Unidad: °C")
+                col_ph = st.selectbox("Columna con pH", ["No disponible"] + todas_columnas, index=0)
+                st.text("Unidad: adimensional")
 
-            opciones_ph = ["No disponible"] + todas_columnas
-            columna_ph = st.selectbox("Selecciona la columna con el pH:", opciones_ph, index=0)
+            with col2:
+                col_ce = st.selectbox("Columna con Conductividad (CE)", ["No disponible"] + todas_columnas, index=0)
+                if col_ce != "No disponible":
+                    unidad_ce = st.selectbox("Unidad de CE", ["µS/cm", "mS/cm", "dS/m"], key="ce_unit")
+                else:
+                    unidad_ce = None
 
-            opciones_ce = ["No disponible"] + todas_columnas
-            columna_ce = st.selectbox("Selecciona la columna con la conductividad eléctrica:", opciones_ce, index=0)
+                col_eh = st.selectbox("Columna con Potencial redox (Eh)", ["No disponible"] + todas_columnas, index=0)
+                if col_eh != "No disponible":
+                    unidad_eh = st.selectbox("Unidad de Eh", ["mV", "V"], key="eh_unit")
+                else:
+                    unidad_eh = None
 
-            opciones_eh = ["No disponible"] + todas_columnas
-            columna_eh = st.selectbox("Selecciona la columna con el potencial redox (Eh):", opciones_eh, index=0)
+            # ------------------------------------------------------------------
+            # 2. PARÁMETROS QUÍMICOS
+            # ------------------------------------------------------------------
+            st.subheader("🧪 Parámetros químicos (concentraciones)")
 
-            st.subheader("Selecciona las unidades de tus datos")
-            unidades_global = st.selectbox("Unidad común para todas las concentraciones", ["mg/L", "meq/L", "ppm"])
+            parametros = {
+                'Ca': {'unidades': ['mg/L', 'meq/L', 'ppm']},
+                'Mg': {'unidades': ['mg/L', 'meq/L', 'ppm']},
+                'Na': {'unidades': ['mg/L', 'meq/L', 'ppm']},
+                'K': {'unidades': ['mg/L', 'meq/L', 'ppm']},
+                'HCO3': {'unidades': ['mg/L', 'meq/L', 'ppm']},
+                'SO4': {'unidades': ['mg/L', 'meq/L', 'ppm']},
+                'Cl': {'unidades': ['mg/L', 'meq/L', 'ppm']},
+                'SiO2': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+                'As': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+                'B': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+                'Li': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+                'Mn': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+                'Fe': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+                'Al': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+                'Sr': {'unidades': ['mg/L', 'µg/L', 'ppm']},
+            }
 
+            seleccion_columnas = {}
+            seleccion_unidades = {}
+
+            # Crear 3 columnas para organizar
+            cols_param = st.columns(3)
+            for i, (param, config) in enumerate(parametros.items()):
+                with cols_param[i % 3]:
+                    st.markdown(f"**{param}**")
+                    columna = st.selectbox(f"Columna para {param}", ["No disponible"] + todas_columnas, key=f"col_{param}")
+                    seleccion_columnas[param] = columna
+                    if columna != "No disponible":
+                        unidad = st.selectbox(f"Unidad de {param}", config['unidades'], key=f"unidad_{param}")
+                        seleccion_unidades[param] = unidad
+                    else:
+                        seleccion_unidades[param] = None
+
+            # ------------------------------------------------------------------
+            # 3. PROCESAMIENTO
+            # ------------------------------------------------------------------
             if st.button("🔬 Procesar"):
                 if st.session_state.muestras_procesadas >= 3:
                     st.error("⚠️ Límite gratuito alcanzado. Contacta para plan de pago.")
                 else:
+                    # Verificar al menos 3 iones mayoritarios seleccionados
+                    mayoritarios = ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']
+                    mayoritarios_seleccionados = [p for p in mayoritarios if seleccion_columnas[p] != "No disponible"]
+                    if len(mayoritarios_seleccionados) < 3:
+                        st.error("❌ Debes seleccionar al menos 3 iones mayoritarios (Ca, Mg, Na, K, HCO3, SO4, Cl).")
+                        st.stop()
+
                     num_muestras = len(df)
                     if st.session_state.muestras_procesadas + num_muestras > 3:
                         restantes = 3 - st.session_state.muestras_procesadas
-                        st.warning(f"⚠️ El archivo tiene {num_muestras} muestras. Solo puedes procesar {restantes} más. Sube un archivo más pequeño o contacta para plan de pago.")
+                        st.warning(f"⚠️ El archivo tiene {num_muestras} muestras. Solo puedes procesar {restantes} más.")
                     else:
                         lista_informes = []
                         lista_resumen = []
+
                         for idx, row in df.iterrows():
-                            if columna_muestra != "Ninguna (usar número de fila)":
-                                nombre = str(row[columna_muestra])
+                            # Nombre de muestra
+                            if col_muestra != "Ninguna":
+                                nombre = str(row[col_muestra])
                                 if pd.isna(nombre) or nombre == '':
                                     nombre = f"Muestra_{idx+1}"
                             else:
                                 nombre = f"Muestra_{idx+1}"
 
-                            if columna_temp != "No disponible":
-                                temp = row[columna_temp]
+                            # Temperatura
+                            if col_temp != "No disponible":
+                                temp = row[col_temp]
                                 if pd.isna(temp):
                                     temp = 25.0
                             else:
                                 temp = 25.0
 
-                            if columna_ph != "No disponible":
-                                ph = row[columna_ph]
+                            # pH
+                            if col_ph != "No disponible":
+                                ph = row[col_ph]
                                 if pd.isna(ph):
                                     ph = None
                             else:
                                 ph = None
 
-                            # CE y Eh se leen pero no se usan aún (solo lectura)
-                            if columna_ce != "No disponible":
-                                ce = row[columna_ce] if not pd.isna(row[columna_ce]) else None
-                            if columna_eh != "No disponible":
-                                eh = row[columna_eh] if not pd.isna(row[columna_eh]) else None
+                            # CE (conversión a µS/cm)
+                            ce_val = None
+                            if col_ce != "No disponible":
+                                ce_val = row[col_ce]
+                                if not pd.isna(ce_val):
+                                    if unidad_ce == "mS/cm":
+                                        ce_val = ce_val * 1000
+                                    elif unidad_ce == "dS/m":
+                                        ce_val = ce_val * 1000
+                                else:
+                                    ce_val = None
 
+                            # Eh (conversión a mV)
+                            eh_val = None
+                            if col_eh != "No disponible":
+                                eh_val = row[col_eh]
+                                if not pd.isna(eh_val):
+                                    if unidad_eh == "V":
+                                        eh_val = eh_val * 1000
+                                else:
+                                    eh_val = None
+
+                            # Extraer iones mayoritarios y minoritarios
                             datos_mg = {}
-                            for param in ['Ca', 'Mg', 'Na', 'K', 'HCO3', 'SO4', 'Cl']:
-                                val = row.get(param, 0)
-                                if pd.isna(val):
-                                    val = 0
-                                datos_mg[param] = convertir_a_mg_L(val, unidades_global, param)
+                            datos_traza = {}
+                            for param in parametros:
+                                columna = seleccion_columnas[param]
+                                if columna != "No disponible":
+                                    val = row[columna]
+                                    if pd.isna(val):
+                                        val = 0
+                                    unidad = seleccion_unidades[param]
+                                    if unidad:
+                                        datos_mg[param] = convertir_a_mg_L(val, unidad, param)
+                                    else:
+                                        datos_mg[param] = val
+                                    # Guardar traza por separado para el informe
+                                    if param in ['SiO2', 'As', 'B', 'Li', 'Mn', 'Fe', 'Al', 'Sr']:
+                                        datos_traza[param] = datos_mg[param]
+                                else:
+                                    datos_mg[param] = 0
+                                    if param in ['SiO2', 'As', 'B', 'Li', 'Mn', 'Fe', 'Al', 'Sr']:
+                                        datos_traza[param] = 0
 
-                            info = generar_informe(datos_mg, temp, ph, nombre)
+                            # Generar informe
+                            info = generar_informe(datos_mg, temp, ph, nombre, ce_val, eh_val, datos_traza)
                             lista_informes.append((nombre, info))
-                            tds = sum(datos_mg.values())
-                            meq,_,_,_,_ = balance_ionico(datos_mg)
+
+                            # TDS y tipo Kurlov
+                            tds = sum([datos_mg.get(p, 0) for p in mayoritarios])
+                            meq,_,_,_,_ = balance_ionico({p: datos_mg.get(p, 0) for p in mayoritarios})
                             tipo = kurlov(meq)
                             lista_resumen.append((nombre, tds, tipo))
 
@@ -360,13 +469,13 @@ if opcion == "📁 Subir archivo":
                                 os.unlink(tmp.name)
                             st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
                         except Exception as e:
-                            st.error(f"❌ Error al generar el PDF: {e}. Asegúrate de que la librería fpdf esté instalada.")
+                            st.error(f"❌ Error al generar el PDF: {e}")
 
         except Exception as e:
-            st.error(f"❌ Error al leer el archivo: {e}. Asegúrate de que el formato sea correcto (CSV con coma o Excel .xlsx/.xls).")
+            st.error(f"❌ Error al leer el archivo: {e}")
 
 # ------------------------------------------------------------
-# INGRESO MANUAL (sin cambios)
+# INGRESO MANUAL (similar pero con opciones de unidades para cada parámetro)
 # ------------------------------------------------------------
 elif opcion == "✏️ Ingreso manual":
     st.subheader("Ingresa los valores de una muestra (unidad: mg/L)")
@@ -411,10 +520,10 @@ elif opcion == "✏️ Ingreso manual":
                     st.session_state.muestras_procesadas += 1
                     st.success(f"✅ Procesado. Has usado {st.session_state.muestras_procesadas} de 3 muestras gratis.")
                 except Exception as e:
-                    st.error(f"❌ Error al generar el PDF: {e}. Asegúrate de que fpdf esté instalado.")
+                    st.error(f"❌ Error al generar el PDF: {e}")
 
 # ------------------------------------------------------------
 # Pie de página
 # ------------------------------------------------------------
 st.markdown("---")
-st.caption("Modelagua - Análisis hidrogeoquímico básico. Para servicios profesionales, contacta con nosotros.")
+st.caption("Modelagua - Análisis hidrogeoquímico profesional. Para servicios premium, contacta con nosotros.")
