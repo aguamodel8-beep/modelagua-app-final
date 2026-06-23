@@ -191,7 +191,6 @@ Puedes subir un archivo (CSV o Excel) o ingresar los datos manualmente.
 """)
 st.info(f"📊 Muestras procesadas en esta sesión: **{st.session_state.muestras_procesadas} de 3** (plan gratuito).")
 
-# Descarga de plantilla
 def descargar_plantilla():
     plantilla = pd.DataFrame({
         'Ca': [23],
@@ -210,7 +209,6 @@ def descargar_plantilla():
 
 st.markdown(descargar_plantilla(), unsafe_allow_html=True)
 
-# Guía de formato
 with st.expander("📖 Guía de formato del archivo"):
     st.markdown(
         "**Columnas obligatorias (nombres exactos):**\n"
@@ -230,7 +228,7 @@ with st.expander("📖 Guía de formato del archivo"):
 opcion = st.radio("¿Cómo quieres ingresar los datos?", ("📁 Subir archivo", "✏️ Ingreso manual"))
 
 # ------------------------------------------------------------
-# SUBIR ARCHIVO
+# SUBIR ARCHIVO (con selectores para TODAS las columnas)
 # ------------------------------------------------------------
 if opcion == "📁 Subir archivo":
     archivo = st.file_uploader("Selecciona un archivo (CSV o Excel)", type=["csv", "xlsx"])
@@ -263,44 +261,34 @@ if opcion == "📁 Subir archivo":
                 st.error(f"❌ Faltan las siguientes columnas obligatorias: {', '.join(columnas_faltantes)}. Verifica los nombres.")
                 st.stop()
 
-            # --- SELECCIÓN DE COLUMNAS ---
-            # Columna de identificación de muestra
-            cols_id = [col for col in df.columns if any(palabra in col.lower() for palabra in ['id', 'sample', 'muestra', 'station', 'location', 'nombre', 'name'])]
-            if cols_id:
-                columna_muestra = st.selectbox("Selecciona la columna que identifica a cada muestra:", cols_id, index=0)
-            else:
-                st.info("No se encontró columna con identificadores. Se usarán números de fila.")
-                columna_muestra = None
+            # --- SELECCIÓN DE COLUMNAS (TODAS) ---
+            # Obtener lista de columnas
+            todas_columnas = list(df.columns)
 
-            # Columna de temperatura
-            cols_temp = ['Temp.(oC)', 'Temperatura', 'Temp', 'Temperature', 'T(°C)'] + [col for col in df.columns if 'temp' in col.lower()]
-            cols_temp_existentes = [col for col in cols_temp if col in df.columns]
-            opciones_temp = ["No disponible"] + cols_temp_existentes
-            columna_temp = st.selectbox("Selecciona la columna que contiene la temperatura (o 'No disponible'):", opciones_temp, index=0)
+            # Identificador de muestra (obligatorio elegir o "Ninguna")
+            opciones_id = ["Ninguna (usar número de fila)"] + todas_columnas
+            columna_muestra = st.selectbox("Selecciona la columna que identifica a cada muestra:", opciones_id, index=0)
 
-            # Columna de pH
-            cols_ph = ['pH', 'Ph', 'ph'] + [col for col in df.columns if 'ph' in col.lower()]
-            cols_ph_existentes = [col for col in cols_ph if col in df.columns]
-            opciones_ph = ["No disponible"] + cols_ph_existentes
-            columna_ph = st.selectbox("Selecciona la columna que contiene el pH (o 'No disponible'):", opciones_ph, index=0)
+            # Temperatura
+            opciones_temp = ["No disponible"] + todas_columnas
+            columna_temp = st.selectbox("Selecciona la columna con la temperatura:", opciones_temp, index=0)
 
-            # Columna de conductividad (opcional, solo lectura)
-            cols_ce = ['CE', 'Conductividad', 'Conductivity', 'Specific conductance'] + [col for col in df.columns if 'conduct' in col.lower()]
-            cols_ce_existentes = [col for col in cols_ce if col in df.columns]
-            opciones_ce = ["No disponible"] + cols_ce_existentes
-            columna_ce = st.selectbox("Selecciona la columna que contiene la conductividad (opcional):", opciones_ce, index=0)
+            # pH
+            opciones_ph = ["No disponible"] + todas_columnas
+            columna_ph = st.selectbox("Selecciona la columna con el pH:", opciones_ph, index=0)
 
-            # Columna de Eh (opcional)
-            cols_eh = ['Eh', 'Redox', 'ORP'] + [col for col in df.columns if 'eh' in col.lower() or 'redox' in col.lower()]
-            cols_eh_existentes = [col for col in cols_eh if col in df.columns]
-            opciones_eh = ["No disponible"] + cols_eh_existentes
-            columna_eh = st.selectbox("Selecciona la columna que contiene el potencial redox (opcional):", opciones_eh, index=0)
+            # Conductividad eléctrica (CE)
+            opciones_ce = ["No disponible"] + todas_columnas
+            columna_ce = st.selectbox("Selecciona la columna con la conductividad eléctrica:", opciones_ce, index=0)
+
+            # Potencial redox (Eh)
+            opciones_eh = ["No disponible"] + todas_columnas
+            columna_eh = st.selectbox("Selecciona la columna con el potencial redox (Eh):", opciones_eh, index=0)
 
             # Unidades
             st.subheader("Selecciona las unidades de tus datos")
             unidades_global = st.selectbox("Unidad común para todas las concentraciones", ["mg/L", "meq/L", "ppm"])
 
-            # Botón de procesar
             if st.button("🔬 Procesar"):
                 if st.session_state.muestras_procesadas >= 3:
                     st.error("⚠️ Límite gratuito alcanzado. Contacta para plan de pago.")
@@ -314,14 +302,14 @@ if opcion == "📁 Subir archivo":
                         lista_resumen = []
                         for idx, row in df.iterrows():
                             # Obtener nombre de muestra
-                            if columna_muestra and columna_muestra in df.columns:
+                            if columna_muestra != "Ninguna (usar número de fila)":
                                 nombre = str(row[columna_muestra])
                                 if pd.isna(nombre) or nombre == '':
                                     nombre = f"Muestra_{idx+1}"
                             else:
                                 nombre = f"Muestra_{idx+1}"
 
-                            # Obtener temperatura y pH
+                            # Obtener temperatura
                             if columna_temp != "No disponible":
                                 temp = row[columna_temp]
                                 if pd.isna(temp):
@@ -329,6 +317,7 @@ if opcion == "📁 Subir archivo":
                             else:
                                 temp = 25.0
 
+                            # Obtener pH
                             if columna_ph != "No disponible":
                                 ph = row[columna_ph]
                                 if pd.isna(ph):
@@ -336,7 +325,7 @@ if opcion == "📁 Subir archivo":
                             else:
                                 ph = None
 
-                            # Obtener conductividad y Eh (por ahora solo se leen, no se usan)
+                            # Obtener CE y Eh (se leen pero no se usan aún)
                             ce = None
                             eh = None
                             if columna_ce != "No disponible":
@@ -360,17 +349,14 @@ if opcion == "📁 Subir archivo":
                             tipo = kurlov(meq)
                             lista_resumen.append((nombre, tds, tipo))
 
-                        # Incrementar contador
                         st.session_state.muestras_procesadas += num_muestras
 
-                        # Resumen
                         resumen = """Balance iónico: Errores aceptables (<10%).
                         Clasificación Kurlov: Varía según muestra.
                         TDS: Rango salino o según cada muestra.
                         Relaciones iónicas: Exceso de sodio, mezcla calcita/dolomita, exceso HCO3.
                         Riesgo: Mayoría sobresaturada en calcita (incrustación), excepto si LI negativo (corrosión)."""
 
-                        # Generar PDF
                         try:
                             pdf = generar_pdf(lista_informes, resumen, lista_resumen)
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -386,7 +372,7 @@ if opcion == "📁 Subir archivo":
             st.error(f"❌ Error al leer el archivo: {e}. Asegúrate de que el formato sea correcto (CSV con coma o Excel .xlsx).")
 
 # ------------------------------------------------------------
-# INGRESO MANUAL (funciona bien, se mantiene igual)
+# INGRESO MANUAL (sin cambios, ya funciona)
 # ------------------------------------------------------------
 elif opcion == "✏️ Ingreso manual":
     st.subheader("Ingresa los valores de una muestra (unidad: mg/L)")
